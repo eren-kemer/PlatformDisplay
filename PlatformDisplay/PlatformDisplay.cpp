@@ -44,7 +44,7 @@ void PlatformDisplay::onLoad()
 {
 	_globalCvarManager = cvarManager;
 	for (int i = 0; i < 6; i++) {
-		logos[i] = std::make_shared<ImageWrapper>(gameWrapper->GetDataFolder() / "PlatformDisplay" / (std::to_string(i) + ".png"), true, false);
+		logos[i] = std::make_shared<ImageWrapper>(gameWrapper->GetDataFolder() / "PlatformDisplayImages" / (std::to_string(i) + ".png"), true, false);
 	}
 
 
