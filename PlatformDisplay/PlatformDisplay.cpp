@@ -2,9 +2,29 @@
 #include "PlatformDisplay.h"
 #include <map>
 #include <iostream>
-
+#include <algorithm>
 BAKKESMOD_PLUGIN(PlatformDisplay, "write a plugin description here", plugin_version, PLUGINTYPE_FREEPLAY)
-
+int SCOREBOARD_HEIGHT = 548;
+int SCOREBOARD_WIDTH = 1033;
+int IMBALANCE_SHIFT = 32;
+int BANNER_DISTANCE = 57;
+int BLUE_BOTTOM = 77;
+int ORANGE_TOP = 32;
+int SCOREBOARD_LEFT = 450;
+int SKIP_TICK_SHIFT = 67;
+int num_blues = 0;
+int num_oranges = 0;
+bool isReplaying = false;
+struct data {
+	UniqueIDWrapper uid;
+	std::string name;
+	bool isBot;
+	int platform;
+	int team;
+	int image;
+	int score;
+};
+std::vector<data> playerInfo;
 std::map<int, std::string> PlatformMap{
 	{ 0,  "[Unknown]" },
 	{ 1,  "[Steam]"   },
@@ -25,25 +45,19 @@ std::map<int, int> PlatformImageMap{
 	{ 6,  4 },
 	{ 7,  4 },
 	{ 9,  0 },
-	{ 11, 5 }
+	{ 11, 5 },
+	{ 12, 6 }
 };
-float scale = 0.65f;
 
-// for both teams
-// { {"Player1Name", "OS"}, {"Player2Name", "OS"}, {"Player3Name", "OS"}, }
-// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-std::vector<std::vector<std::string>> BlueTeamValues;
-std::vector<std::vector<std::string>> OrangeTeamValues;
 std::vector<int> blueTeamLogos;
 std::vector<int> orangeTeamLogos;
-
-float Gap = 0.0f;
+std::vector<UniqueIDWrapper> currentPlayers;
 bool show = false;
 std::shared_ptr<CVarManagerWrapper> _globalCvarManager;
 void PlatformDisplay::onLoad()
 {
 	_globalCvarManager = cvarManager;
-	for (int i = 0; i < 6; i++) {
+	for (int i = 0; i < 7; i++) {
 		logos[i] = std::make_shared<ImageWrapper>(gameWrapper->GetDataFolder() / "PlatformDisplayImages" / (std::to_string(i) + ".png"), true, false);
 	}
 
@@ -61,8 +75,7 @@ void PlatformDisplay::onLoad()
 	});
 
 	gameWrapper->HookEvent("Function TAGame.GameEvent_Soccar_TA.Destroyed", [this](std::string eventName) {
-		BlueTeamValues.clear();
-		OrangeTeamValues.clear();
+		playerInfo.clear();
 	});
 	gameWrapper->HookEvent("Function TAGame.GFxData_GameEvent_TA.OnOpenScoreboard", [this](std::string eventName) {
 		show = true;
@@ -70,152 +83,172 @@ void PlatformDisplay::onLoad()
 	gameWrapper->HookEvent("Function TAGame.GFxData_GameEvent_TA.OnCloseScoreboard", [this](std::string eventName) {
 		show = false;
 	});
-
-	//std::bind instead
+	gameWrapper->HookEvent("Function ReplayDirector_TA.Playing.BeginState", [this](std::string eventName) {
+		isReplaying = true;
+		gameInit();
+	});
+	gameWrapper->HookEvent("Function ReplayDirector_TA.Playing.EndState", [this](std::string eventName) {
+		isReplaying = false;
+		gameInit();
+	});
 	gameWrapper->HookEvent("Function GameEvent_Soccar_TA.Countdown.BeginState", [this](std::string eventName) {
-		getNamesAndPlatforms();
+	/*	initCurrentPlayers();*/
+		gameInit();
 	});
 	gameWrapper->HookEvent("Function TAGame.GameEvent_Soccar_TA.OnGameTimeUpdated", [this](std::string eventName) {
-		getNamesAndPlatforms();
+	/*	updateCurrentPlayers();*/
+		gameInit();
 	});
-	//
 }
 void PlatformDisplay::Render(CanvasWrapper canvas) {
+	float scale;
 	if (show) {
-		//get the pos and color for the blue team
 
-		//cvars
-		CVarWrapper BlueXLoc = cvarManager->getCvar("PlatformDisplay_BlueTeamPos_X");
-		CVarWrapper BlueYLoc = cvarManager->getCvar("PlatformDisplay_BlueTeamPos_Y");
-		CVarWrapper BlueColorPicker = cvarManager->getCvar("PlatformDisplay_ColorPickerBlueTeam");
-		if (!BlueXLoc) { return; }
-		if (!BlueYLoc) { return; }
-		if (!BlueColorPicker) { return; }
-		// the values
-		float BlueX = BlueXLoc.getFloatValue();
-		float BlueY = BlueYLoc.getFloatValue();
-		LinearColor BlueColor = BlueColorPicker.getColorValue();
+		if(!gameWrapper->IsInGame() && !gameWrapper->IsInOnlineGame() || gameWrapper->IsInFreeplay() || gameWrapper->IsInReplay()) return;
+		ServerWrapper server = gameWrapper->IsInOnlineGame() ? gameWrapper->GetOnlineGame(): gameWrapper->GetGameEventAsServer();
 
-		Gap = 0.0f;
-		Vector2F BluePos = { BlueX, BlueY };
+		if(!server) return;
+		MMRWrapper mmrWrapper = gameWrapper->GetMMRWrapper();
+
+		Vector2 canvas_size = gameWrapper->GetScreenSize();
+		if(float(canvas_size.X) / float(canvas_size.Y) > 1.5f) scale = 0.507f * canvas_size.Y / SCOREBOARD_HEIGHT;
+		else scale = 0.615f * canvas_size.X / SCOREBOARD_WIDTH;
+
+		float uiScale = gameWrapper->GetDisplayScale();
+
+		bool mutators = mmrWrapper.GetCurrentPlaylist() == 34;
+
+		Vector2F center = Vector2F { float(canvas_size.X) / 2, float(canvas_size.Y) / 2};
+
+		float mutators_center = canvas_size.X - 1005.0f * (scale * uiScale);
+		if(mutators_center < center.X && mutators) center.X = mutators_center;
+
+		int team_difference = num_blues - num_oranges; 
+
+		center.X -= isReplaying * SKIP_TICK_SHIFT * (scale * uiScale);
+		center.Y += IMBALANCE_SHIFT * (team_difference - ((num_blues == 0) != (num_oranges == 0)) * (team_difference >= 0 ? 1: -1)) * scale * uiScale;
+
+		float image_scale = 0.90;
+		float image_X = -SCOREBOARD_LEFT - 48 * image_scale;
+
+		float image_Y_blue = float(-BLUE_BOTTOM + (6 * (4 - num_blues)));
+		float image_Y_orange = float(-ORANGE_TOP);
+
+		image_scale *= (scale * uiScale);
 		
-		// move to that pos and set color
-		canvas.SetPosition(BluePos);
-		canvas.SetColor(BlueColor);
-		int it = 0; 
+
+		SortPlayerArrByScore();
 		
-		for (std::vector<std::string> BlueTeam : BlueTeamValues) {
-
-			std::string playerName = BlueTeam[0]; // "playername"
-			std::string playerOS = BlueTeam[1]; // "os"
-			std::string playerString = playerOS + playerName; // "[OS]playername"
-
-			// 2x scale
-			canvas.DrawString(playerString, 2.0, 2.0);
-			int platformImage = blueTeamLogos[it];
-			std::shared_ptr<ImageWrapper> image = logos[PlatformImageMap[platformImage]];
-			if (image->IsLoadedForCanvas()) {
-				canvas.SetPosition(Vector2F{ BlueX - (float)(48 * scale), BlueY + Gap - 5 });
-				canvas.DrawTexture(image.get(), scale);
+		num_blues = 0;
+		num_oranges = 0;
+		for (data player : playerInfo) {
+			float Y = 0;
+			if(player.team == 0) {
+				num_blues++;
+				Y = image_Y_blue - (BANNER_DISTANCE * (num_blues));
 			}
-			else {
-				LOG("not loaded for canvas");
+			if(player.team == 1) {
+				num_oranges++;
+				Y = image_Y_orange + (BANNER_DISTANCE * num_oranges);
 			}
-			Gap += 25.0f;
-			// move the next player down 1
-			canvas.SetPosition(Vector2F{ BlueX, BlueY + Gap });
-			it++;
-		}
+			Y = center.Y + Y * (scale * uiScale);
+			float X = image_X - 48 * image_scale;
+			X = center.X + X * ( scale * uiScale);
 
-		CVarWrapper OrangeXLoc = cvarManager->getCvar("PlatformDisplay_OrangeTeamPos_X");
-		CVarWrapper OrangeYLoc = cvarManager->getCvar("PlatformDisplay_OrangeTeamPos_Y");
-		CVarWrapper OrangeColorPicker = cvarManager->getCvar("PlatformDisplay_ColorPickerOrangeTeam");
-		if (!OrangeXLoc) { return; }
-		if (!OrangeYLoc) { return; }
-		if (!OrangeColorPicker) { return; }
-		float OrangeX = OrangeXLoc.getFloatValue();
-		float OrangeY = OrangeYLoc.getFloatValue();
-		LinearColor OrangeColor = OrangeColorPicker.getColorValue();
-		Gap = 0.0f;
-		Vector2F OrangePos = { OrangeX, OrangeY };
-		canvas.SetPosition(OrangePos);
-		canvas.SetColor(OrangeColor);
-		it = 0;
-		for (std::vector<std::string> OrangeTeam : OrangeTeamValues) {
-
-			std::string playerName = OrangeTeam[0];
-			std::string playerOS = OrangeTeam[1];
-
-			std::string playerString = playerOS + playerName;
-
-			canvas.DrawString(playerString, 2.0, 2.0);
-			int platformImage = orangeTeamLogos[it];
-			std::shared_ptr<ImageWrapper> image = logos[PlatformImageMap[platformImage]];
-			if (image->IsLoadedForCanvas()) {
-				canvas.SetPosition(Vector2F {OrangeX - (float)(48 * scale), OrangeY + Gap - 5});
-				canvas.DrawTexture(image.get(), scale);
-			}
-			else {
-				LOG("not loaded for canvas");
-			}
-
-			Gap += 25.0f;
-			canvas.SetPosition(Vector2F{ OrangeX, OrangeY + Gap });
-			it++;
+			Vector2F pos = Vector2F{X, Y};
+			canvas.SetPosition(pos);
+			canvas.SetColor(LinearColor {255, 255, 255, 255});
+			canvas.DrawBox(Vector2{int(image_scale), int(image_scale)});
+			canvas.DrawTexture(logos[player.image].get(), image_scale);
+			canvas.DrawRect(Vector2F {center.X - 2, center.Y - 2}, Vector2F {center.X + 2, center.Y + 2});
 		}
 	}
 }
-void PlatformDisplay::getNamesAndPlatforms() {
-	//reset the vectors so it doesnt grow
-	BlueTeamValues.clear();
-	OrangeTeamValues.clear();
-	orangeTeamLogos.clear();
-	blueTeamLogos.clear();
+void PlatformDisplay::SortPlayerArrByScore() {
+	std::vector<data> bluePlayers;
+	std::vector<data> orangePlayers;
+	for (data player : playerInfo) {
+		if (player.team == 0) bluePlayers.push_back(player);
+		else if (player.team == 1) orangePlayers.push_back(player);
+	}
+	std::sort(bluePlayers.begin(), bluePlayers.end(), [](const data& a, const data& b) {
+		return a.score < b.score;
+	});
+	std::sort(orangePlayers.begin(), orangePlayers.end(), [](const data& a, const data& b) {
+		return a.score > b.score;
+	});
+	std::sort(bluePlayers.begin(), bluePlayers.end(), [](const data& a, const data& b) {
+		if(a.score == b.score) return a.name > b.name;
+		return a.score < b.score;
+	});
+	std::sort(orangePlayers.begin(), orangePlayers.end(), [](const data& a, const data& b) {
+		if(a.score == b.score) return a.name < b.name;
+		return a.score > b.score;
+	});
+	playerInfo.clear();
+	for (data player : bluePlayers)   playerInfo.push_back(player); 
+	for (data player : orangePlayers) playerInfo.push_back(player);
+}
 
-	//get server
-	ServerWrapper server = gameWrapper->GetCurrentGameState();
-	if (!server) { return; }
+void PlatformDisplay::gameInit() {
+	if (!gameWrapper->IsInGame() && !gameWrapper->IsInOnlineGame() || gameWrapper->IsInFreeplay() || gameWrapper->IsInReplay()) return;
+	ServerWrapper server = gameWrapper->IsInOnlineGame() ? gameWrapper->GetOnlineGame() : gameWrapper->GetGameEventAsServer();
 
-	//get the cars in the sever
-	ArrayWrapper<CarWrapper> cars = server.GetCars(); // here
+	if (!server) return;
+	playerInfo.clear();
+	ArrayWrapper<PriWrapper> players = server.GetPRIs();
+	for(int i = 0; i<players.Count(); i++) {
+		
+		PriWrapper pri = players.Get(i);
+		if(pri.IsNull()) return;
+		int score = pri.GetMatchScore();
+		UniqueIDWrapper uid = pri.GetUniqueIdWrapper();
+		std::string name = pri.GetPlayerName().ToString();
+		OnlinePlatform platform = uid.GetPlatform();
+		if(!platform) platform = OnlinePlatform_PsyNet;
+		bool bot = pri.GetbBot();
+		int team = pri.GetTeamNum();
+		int platformImage = PlatformImageMap[platform];
+		if(bot) platformImage = 6;
 
-	//for car in {}
-	for (CarWrapper car : cars) {
-
-
-		// idk what a pri is but we get it here
-		PriWrapper pri = car.GetPRI();
-		if (!pri) { return; }
-
-		//get the uniqueID and the platform -> int <0-13>
-		UniqueIDWrapper uniqueID = pri.GetUniqueIdWrapper(); //here
-		OnlinePlatform platform = uniqueID.GetPlatform(); //here
-		if (!platform) { return; }
-
-		// declare in iterator and an os string
-		std::map<int, std::string>::iterator it;
-		std::string OS;
-
-		//wanting to check what team the player is on so we can add them to the right vector
-		int teamNum = car.GetTeamNum2();
-		//get the owner name
-		std::string name = car.GetOwnerName();
-		//for len
-		for (it = PlatformMap.begin(); it != PlatformMap.end(); it++) {
-			
-			int key = it->first; //int <0-12>
-
-			if (key == platform) {
-				OS = it->second; // what ever the number is mapped to
-				break;
-			}
-		}
-		//add correspondingly with the name and os
-		if (teamNum == 0) { BlueTeamValues.push_back({ name, OS }); blueTeamLogos.push_back(platform); }
-		if (teamNum == 1) { OrangeTeamValues.push_back({ name, OS }); orangeTeamLogos.push_back(platform); }
-
+		playerInfo.push_back( {uid, name, bot, platform, team, platformImage, score} );
 	}
 }
+//void PlatformDisplay::initCurrentPlayers() {
+//	for car in cars 
+//		//get uid from each car
+//
+//		//add them to current players
+//}
+
+//void PlatformDisplay::updateCurrentPlayers() {
+//    // new version of current playes assignment
+//	std::vector<data> cPlayers;
+//
+//	//clear current player array
+//	playerInfo.clear()
+//
+//	//loop through all players in game
+//
+//	for car in cars
+//	// loop through all current players
+//		for player in current players
+//
+//			//check if the current players in game match with the current players in the array
+//			if car.uid = current player.uid
+//
+//					//add them to the playerInfo array
+//				playerinfo.add(current player)
+//
+//					//add current players to new players 
+//				cPlayers.add(current player)
+//	
+//	current players = cPlayers
+//}
+
+
+
+
 void PlatformDisplay::onUnload()
 {
 }

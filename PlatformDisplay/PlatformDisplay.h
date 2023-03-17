@@ -32,10 +32,12 @@ class PlatformDisplay :
 	virtual bool IsActiveOverlay() override;
 	virtual void OnOpen() override;
 	virtual void OnClose() override;
-	void getNamesAndPlatforms();
+	void SortPlayerArrByScore();
+	//void updateCurrentPlayers();
+	//void initCurrentPlayers();
 	void Render(CanvasWrapper canvas);
-
-	std::shared_ptr<ImageWrapper> logos[6];
+	void gameInit();
+	std::shared_ptr<ImageWrapper> logos[7];
 
 };
 
