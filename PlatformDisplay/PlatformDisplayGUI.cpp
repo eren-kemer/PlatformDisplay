@@ -2,10 +2,6 @@
 #include "PlatformDisplay.h"
 
 
-std::string PlatformDisplay::GetPluginName() {
-	return "PlatformDisplay";
-}
-
 void PlatformDisplay::SetImGuiContext(uintptr_t ctx) {
 	ImGui::SetCurrentContext(reinterpret_cast<ImGuiContext*>(ctx));
 }
